@@ -25,15 +25,34 @@ const canvas = document.getElementById("wheel");
 const ctx = canvas.getContext("2d");
 const radius = canvas.width / 2;
 
-let angle = 0;
+let currentRotation = 0;
+let spinning = false;
+let lastTickIndex = 0;
+
+// 🔊 einfacher Tick-Sound (ohne Datei, WebAudio)
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playTick() {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  osc.frequency.value = 800;
+  gain.gain.value = 0.05;
+
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.03);
+}
 
 function getTotalWeight() {
   return items.reduce((sum, item) => sum + item.rating, 0);
 }
 
-function drawWheel() {
+function drawWheel(rotation = 0) {
   const total = getTotalWeight();
-  let startAngle = 0;
+  let startAngle = rotation;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -43,7 +62,7 @@ function drawWheel() {
     ctx.beginPath();
     ctx.moveTo(radius, radius);
     ctx.arc(radius, radius, radius, startAngle, startAngle + sliceAngle);
-    ctx.fillStyle = `hsl(${index * 30}, 70%, 50%)`;
+    ctx.fillStyle = `hsl(${index * 25}, 70%, 50%)`;
     ctx.fill();
 
     ctx.save();
@@ -69,7 +88,9 @@ function updateList() {
 }
 
 function spinWheel() {
-  if (items.length === 0) return;
+  if (spinning || items.length === 0) return;
+
+  spinning = true;
 
   const total = getTotalWeight();
   const rand = Math.random() * total;
@@ -85,19 +106,78 @@ function spinWheel() {
     }
   }
 
-  const selected = items[selectedIndex];
+  // Winkel bis zum Zielsegment
+  let startAngle = 0;
+  for (let i = 0; i < selectedIndex; i++) {
+    startAngle += (items[i].rating / total) * 2 * Math.PI;
+  }
 
-  document.getElementById("result").textContent = `🎉 Ergebnis: ${selected.title}`;
+  const sliceAngle = (items[selectedIndex].rating / total) * 2 * Math.PI;
+  const targetAngle = startAngle + sliceAngle / 2;
 
-  // entfernen
-  items.splice(selectedIndex, 1);
+  // 🎡 viele Umdrehungen + Ziel
+  const spins = 6 + Math.random() * 3;
 
-  drawWheel();
-  updateList();
+  const finalRotation =
+    (Math.PI * 1.5 - targetAngle) + (Math.PI * 2 * spins);
+
+  animateSpin(currentRotation, currentRotation + finalRotation, selectedIndex);
 }
 
-document.getElementById("spinBtn").addEventListener("click", spinWheel);
+function animateSpin(start, end, selectedIndex) {
+  const duration = 4000 + Math.random() * 1000;
+  const startTime = performance.now();
 
-// initial
+  const totalSlices = items.length;
+
+  function animate(time) {
+    const t = (time - startTime) / duration;
+
+    if (t >= 1) {
+      currentRotation = end % (Math.PI * 2);
+      drawWheel(currentRotation);
+
+      const selected = items[selectedIndex];
+      document.getElementById("result").textContent =
+        `🎉 Ergebnis: ${selected.title}`;
+
+      items.splice(selectedIndex, 1);
+      updateList();
+
+      spinning = false;
+      return;
+    }
+
+    // 🧠 physikalisches Abbremsen (easeOutCubic)
+    const ease = 1 - Math.pow(1 - t, 3);
+    const angle = start + (end - start) * ease;
+
+    // 🔊 Tick bei Segmentwechsel
+    const normalized = angle % (Math.PI * 2);
+    const sliceIndex = Math.floor(
+      (normalized / (Math.PI * 2)) * totalSlices
+    );
+
+    if (sliceIndex !== lastTickIndex) {
+      playTick();
+      lastTickIndex = sliceIndex;
+    }
+
+    drawWheel(angle);
+    requestAnimationFrame(animate);
+  }
+
+  requestAnimationFrame(animate);
+}
+
+document.getElementById("spinBtn").addEventListener("click", () => {
+  // wichtig für Browser (Audio erst nach Interaction)
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+  spinWheel();
+});
+
+// init
 drawWheel();
 updateList();
